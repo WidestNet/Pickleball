@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/players/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Facilities - read by all authenticated, write by admins
+    match /facilities/{facilityId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+      
+      // Courts subcollection
+      match /courts/{courtId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+    }
+    
+    // Queues - read by all authenticated, join/leave by owner
+    match /queues/{queueId} {
+      allow read: if isAuthenticated();
+      allow update: if isAuthenticated(); // Players can join/leave
+      allow create, delete: if isAdmin();
+    }
+    
+    // Games - read by participants, write by participants or admins
+    match /games/{gameId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && 
+        (request.auth.uid in resource.data.playerIds || isAdmin());
+      allow delete: if isAdmin();
+    }
+    
+    // Players - own profile or admin access
+    match /players/{playerId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(playerId);
+      allow update: if isOwner(playerId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Analytics - admin only
+    match /analytics/{document=**} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

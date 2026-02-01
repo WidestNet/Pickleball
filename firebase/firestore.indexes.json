@@ -1,0 +1,47 @@
+{
+    "indexes": [
+        {
+            "collectionGroup": "games",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "courtId",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "startedAt",
+                    "order": "DESCENDING"
+                }
+            ]
+        },
+        {
+            "collectionGroup": "games",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "facilityId",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "endedAt",
+                    "order": "DESCENDING"
+                }
+            ]
+        },
+        {
+            "collectionGroup": "queues",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "facilityId",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "skillLevel",
+                    "order": "ASCENDING"
+                }
+            ]
+        }
+    ],
+    "fieldOverrides": []
+}
