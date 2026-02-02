@@ -26,6 +26,13 @@ import {
 // Facility ID - St Pete Athletic
 const FACILITY_ID = 'st-pete-athletic';
 
+// Skill level colors - must match COLORS in index.js
+const SKILL_COLORS = {
+    beginner: '#22C55E',     // Bright green 🟢
+    intermediate: '#3B82F6', // Bright blue 🔵
+    advanced: '#A855F7',     // Purple 🟣
+};
+
 // ========================================
 // FACILITY DATA
 // ========================================
@@ -46,13 +53,13 @@ export async function initializeFacility() {
             createdAt: serverTimestamp(),
         });
 
-        // Create skill level queues
+        // Create skill level queues with distinct colors
         const queues = [
             {
                 id: 'beginner',
                 label: 'Beginner Open Play',
                 description: '2.0 - 2.5',
-                color: '#52796F',
+                color: SKILL_COLORS.beginner,
                 courts: '1-4',
                 totalCourts: 4,
                 activeCourts: 0,
@@ -62,7 +69,7 @@ export async function initializeFacility() {
                 id: 'intermediate',
                 label: 'Intermediate Open Play',
                 description: '3.0 - 3.5',
-                color: '#2D6A4F',
+                color: SKILL_COLORS.intermediate,
                 courts: '5-10',
                 totalCourts: 6,
                 activeCourts: 0,
@@ -72,7 +79,7 @@ export async function initializeFacility() {
                 id: 'advanced',
                 label: 'Advanced Open Play',
                 description: '4.0+',
-                color: '#1B4332',
+                color: SKILL_COLORS.advanced,
                 courts: '11-14',
                 totalCourts: 4,
                 activeCourts: 0,
@@ -100,6 +107,29 @@ export async function getFacility() {
     const facilityRef = doc(db, 'facilities', FACILITY_ID);
     const facilitySnap = await getDoc(facilityRef);
     return facilitySnap.exists() ? { id: facilitySnap.id, ...facilitySnap.data() } : null;
+}
+
+/**
+ * Update queue colors to match new distinct color scheme
+ * Call this once to migrate existing queues
+ */
+export async function updateQueueColors() {
+    const updates = [
+        { id: 'beginner', color: SKILL_COLORS.beginner },
+        { id: 'intermediate', color: SKILL_COLORS.intermediate },
+        { id: 'advanced', color: SKILL_COLORS.advanced },
+    ];
+
+    for (const update of updates) {
+        const queueRef = doc(db, 'facilities', FACILITY_ID, 'queues', update.id);
+        await updateDoc(queueRef, {
+            color: update.color,
+            updatedAt: serverTimestamp(),
+        });
+        console.log(`Updated ${update.id} color to ${update.color}`);
+    }
+
+    console.log('All queue colors updated!');
 }
 
 // ========================================

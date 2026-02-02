@@ -146,10 +146,31 @@ export function addNotificationResponseListener(handler) {
     return Notifications.addNotificationResponseReceivedListener(handler);
 }
 
+/**
+ * Save a push token to Firestore for a user
+ * @param {string} userId - Firebase user ID
+ * @param {string} token - Push token
+ */
+export async function savePushToken(userId, token) {
+    if (!userId || !token) return;
+
+    try {
+        await setDoc(doc(db, 'users', userId), {
+            pushToken: token,
+            pushTokenUpdatedAt: serverTimestamp(),
+            platform: Platform.OS,
+        }, { merge: true });
+        console.log('Push token saved for user:', userId);
+    } catch (error) {
+        console.error('Error saving push token:', error);
+    }
+}
+
 export default {
     registerForPushNotifications,
     scheduleLocalNotification,
     sendImmediateNotification,
     addNotificationReceivedListener,
     addNotificationResponseListener,
+    savePushToken,
 };

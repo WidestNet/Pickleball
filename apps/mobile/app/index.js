@@ -5,7 +5,7 @@
  * Brand: Modern, premium, warm hospitality
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,12 @@ import {
   SectionList,
   ActivityIndicator,
   RefreshControl,
+  Modal,
+  TextInput,
+  Animated,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 
 // Firebase
@@ -33,6 +39,8 @@ import {
   leaveQueue,
   subscribeToUserQueue,
   subscribeToQueue,
+  updateQueueColors,
+  getFacility,
 } from '../queueService';
 
 // Push Notifications
@@ -41,6 +49,7 @@ import {
   scheduleLocalNotification,
   addNotificationReceivedListener,
   addNotificationResponseListener,
+  savePushToken,
 } from '../notificationService';
 
 // Haptic Feedback
@@ -155,8 +164,18 @@ export default function App() {
     queueId: null,
   });
   const [queuePlayers, setQueuePlayers] = useState([]);
-  const [skillLevels, setSkillLevels] = useState(SKILL_LEVELS); // Will be replaced with Firestore data
+  const [skillLevels, setSkillLevels] = useState(SKILL_LEVELS);
+  const [facility, setFacility] = useState({ courts: [], courtCount: 14 }); // Synced from admin
   const [lastNotifiedPosition, setLastNotifiedPosition] = useState(null);
+
+  // Join Queue Modal state
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [pendingLevel, setPendingLevel] = useState(null);
+  const [playerName, setPlayerName] = useState('');
+  const [playerPhone, setPlayerPhone] = useState('');
+
+  // "You're Up!" Full-screen Modal state
+  const [showYourTurnModal, setShowYourTurnModal] = useState(false);
 
   // Admin state
   const [isAdminMode, setIsAdminMode] = useState(false);
@@ -201,6 +220,19 @@ export default function App() {
 
         // Initialize facility data if needed
         await initializeFacility();
+
+        // Update queue colors to new distinct scheme (one-time migration)
+        try {
+          await updateQueueColors();
+        } catch (e) {
+          console.log('Queue colors already up to date or error:', e.message);
+        }
+
+        // Get facility data for court count
+        const facilityData = await getFacility();
+        if (facilityData) {
+          console.log('Facility loaded:', facilityData.name, facilityData.courtCount, 'courts');
+        }
 
         // Register for push notifications
         const pushToken = await registerForPushNotifications(authUser.uid);
@@ -264,7 +296,7 @@ export default function App() {
           // Trigger notification if position improved to <= 2
           if (newPosition <= 2 && lastNotifiedPosition !== newPosition) {
             const message = newPosition === 1
-              ? "🎾 IT'S YOUR TURN! Head to your assigned court now!"
+              ? "🏓 IT'S YOUR TURN! Head to your assigned court now!"
               : "⚡ You're #2 - Get ready, you're almost up!";
 
             scheduleLocalNotification(
@@ -273,6 +305,11 @@ export default function App() {
               1
             );
             setLastNotifiedPosition(newPosition);
+
+            // Show full-screen modal when it's your turn
+            if (newPosition === 1) {
+              setShowYourTurnModal(true);
+            }
           }
 
           setUserQueue({
@@ -297,22 +334,77 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // Handle join queue
-  async function handleJoinQueue(level) {
+  // Subscribe to facility data for real-time court count
+  useEffect(() => {
     if (!user) return;
 
-    try {
-      // Haptic feedback on action
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const setupFacilitySubscription = async () => {
+      try {
+        const { doc, onSnapshot } = await import('firebase/firestore');
+        const facilityRef = doc(db, 'facilities', 'st-pete-athletic');
 
-      const result = await joinQueue(level.id, user);
+        return onSnapshot(facilityRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            const courts = data.courts || [];
+            const activeCourts = courts.filter(c => c.active !== false);
+            setFacility({
+              ...data,
+              courts: courts,
+              courtCount: activeCourts.length,
+            });
+            console.log('Facility updated:', activeCourts.length, 'active courts');
+          }
+        });
+      } catch (error) {
+        console.log('Facility subscription error:', error);
+      }
+    };
+
+    let unsubscribe = null;
+    setupFacilitySubscription().then(unsub => { unsubscribe = unsub; });
+
+    return () => { if (unsubscribe) unsubscribe(); };
+  }, [user]);
+
+  // Open join queue modal
+  function openJoinModal(level) {
+    if (!user) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setPendingLevel(level);
+    setPlayerName(user.displayName || '');
+    setPlayerPhone('');
+    setShowJoinModal(true);
+  }
+
+  // Actually join the queue after name entry
+  async function confirmJoinQueue() {
+    if (!user || !pendingLevel) return;
+
+    const trimmedName = playerName.trim();
+    if (!trimmedName) {
+      Alert.alert('Name Required', 'Please enter your name to join the queue.');
+      return;
+    }
+
+    try {
+      // Close modal first for snappy feel
+      setShowJoinModal(false);
+
+      const userWithName = {
+        ...user,
+        displayName: trimmedName,
+        phone: playerPhone.trim() || null,
+      };
+
+      const result = await joinQueue(pendingLevel.id, userWithName);
       console.log('Joined queue:', result);
 
       setUserQueue({
         inQueue: true,
-        level,
+        level: pendingLevel,
         position: result.position,
-        queueId: level.id,
+        queueId: pendingLevel.id,
       });
 
       // Success haptic
@@ -323,6 +415,14 @@ export default function App() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Error', error.message || 'Could not join queue. Please try again.');
     }
+  }
+
+  // Cancel join modal
+  function cancelJoinModal() {
+    setShowJoinModal(false);
+    setPendingLevel(null);
+    setPlayerName('');
+    setPlayerPhone('');
   }
 
   // Handle leave queue
@@ -358,8 +458,241 @@ export default function App() {
   // Pull to refresh
   async function onRefresh() {
     setRefreshing(true);
-    // The subscriptions will automatically update
     setTimeout(() => setRefreshing(false), 1000);
+  }
+
+  // ========================================
+  // JOIN QUEUE MODAL
+  // ========================================
+  function JoinQueueModal() {
+    if (!showJoinModal || !pendingLevel) return null;
+
+    return (
+      <Modal
+        visible={showJoinModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={cancelJoinModal}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => Keyboard.dismiss()}
+          />
+          <View style={styles.joinModalContainer}>
+            <View style={[styles.joinModalHeader, { backgroundColor: pendingLevel.color }]}>
+              <Text style={styles.joinModalTitle}>Join {pendingLevel.label}</Text>
+              <Text style={styles.joinModalSubtitle}>Courts {pendingLevel.courts} • DUPR {pendingLevel.description}</Text>
+            </View>
+
+            <View style={styles.joinModalBody}>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Your Name *"
+                placeholderTextColor={COLORS.textMuted}
+                value={playerName}
+                onChangeText={setPlayerName}
+                autoCapitalize="words"
+                autoFocus={true}
+                returnKeyType="next"
+              />
+
+              <TextInput
+                style={[styles.textInput, { marginTop: 12 }]}
+                placeholder="Phone (optional - for SMS alerts)"
+                placeholderTextColor={COLORS.textMuted}
+                value={playerPhone}
+                onChangeText={setPlayerPhone}
+                keyboardType="phone-pad"
+                returnKeyType="done"
+              />
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity style={styles.modalCancelBtn} onPress={cancelJoinModal}>
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalJoinBtn, { backgroundColor: pendingLevel.color }]}
+                  onPress={confirmJoinQueue}
+                >
+                  <Text style={styles.modalJoinText}>Join Queue →</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    );
+  }
+
+  // ========================================
+  // "YOU'RE UP!" FULL-SCREEN MODAL
+  // ========================================
+  function YourTurnModal() {
+    const scaleAnim = useRef(new Animated.Value(0.8)).current;
+    const opacityAnim = useRef(new Animated.Value(0)).current;
+    const pulseAnim = useRef(new Animated.Value(1)).current;
+    const rollAnim = useRef(new Animated.Value(-150)).current; // Start off-screen left
+    const rotateAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+      if (showYourTurnModal) {
+        // Entrance animation
+        Animated.parallel([
+          Animated.spring(scaleAnim, {
+            toValue: 1,
+            tension: 50,
+            friction: 7,
+            useNativeDriver: true,
+          }),
+          Animated.timing(opacityAnim, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+        ]).start();
+
+        // Pulse animation
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(pulseAnim, {
+              toValue: 1.1,
+              duration: 500,
+              useNativeDriver: true,
+            }),
+            Animated.timing(pulseAnim, {
+              toValue: 1,
+              duration: 500,
+              useNativeDriver: true,
+            }),
+          ])
+        ).start();
+
+        // Rolling pickleball animation
+        Animated.loop(
+          Animated.parallel([
+            // Roll across
+            Animated.sequence([
+              Animated.timing(rollAnim, {
+                toValue: 150,
+                duration: 3000,
+                useNativeDriver: true,
+              }),
+              Animated.timing(rollAnim, {
+                toValue: -150,
+                duration: 0,
+                useNativeDriver: true,
+              }),
+            ]),
+            // Rotate while rolling
+            Animated.sequence([
+              Animated.timing(rotateAnim, {
+                toValue: 4,
+                duration: 3000,
+                useNativeDriver: true,
+              }),
+              Animated.timing(rotateAnim, {
+                toValue: 0,
+                duration: 0,
+                useNativeDriver: true,
+              }),
+            ]),
+          ])
+        ).start();
+
+        // Vibration pattern
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    }, [showYourTurnModal]);
+
+    if (!showYourTurnModal) return null;
+
+    const courtRange = userQueue.level?.courts || '1-4';
+    const firstCourt = parseInt(courtRange.split('-')[0]) || 1;
+
+    const handleImHere = () => {
+      setShowYourTurnModal(false);
+      handleLeaveQueue();
+    };
+
+    const handleNeedTime = () => {
+      setShowYourTurnModal(false);
+      Alert.alert('No Problem!', 'Take your time. You\'re still #1 in line.');
+    };
+
+    return (
+      <Modal
+        visible={showYourTurnModal}
+        transparent={true}
+        animationType="fade"
+      >
+        <View style={styles.yourTurnOverlay}>
+          <Animated.View
+            style={[
+              styles.yourTurnContainer,
+              {
+                transform: [{ scale: scaleAnim }],
+                opacity: opacityAnim,
+              }
+            ]}
+          >
+            <Image
+              source={require('../assets/spa-logo.png')}
+              style={styles.yourTurnLogoLarge}
+              resizeMode="contain"
+            />
+
+            <Text style={styles.yourTurnTitleLarge}>🎉 IT'S YOUR TURN!</Text>
+
+            <Animated.View style={[styles.courtBadgeLarge, { transform: [{ scale: pulseAnim }] }]}>
+              <Text style={styles.courtBadgeLabel}>GO TO</Text>
+              <Text style={styles.courtBadgeNumber}>COURT {firstCourt}</Text>
+            </Animated.View>
+
+            <Text style={styles.yourTurnLevelText}>{userQueue.level?.label}</Text>
+
+            <View style={styles.yourTurnButtons}>
+              <TouchableOpacity style={styles.imHereBtnLarge} onPress={handleImHere}>
+                <Text style={styles.imHereBtnLargeText}>✓ I'M HERE</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.needTimeBtnLarge} onPress={handleNeedTime}>
+                <Text style={styles.needTimeBtnLargeText}>Need More Time</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Rolling Pickleball Animation */}
+            <Animated.View
+              style={[
+                styles.rollingPickleball,
+                {
+                  transform: [
+                    { translateX: rollAnim },
+                    {
+                      rotate: rotateAnim.interpolate({
+                        inputRange: [0, 4],
+                        outputRange: ['0deg', '1440deg'],
+                      })
+                    },
+                  ],
+                }
+              ]}
+            >
+              <View style={styles.pickleballInner}>
+                <View style={styles.pickleballHole} />
+                <View style={[styles.pickleballHole, { top: 6, left: 12 }]} />
+                <View style={[styles.pickleballHole, { top: 16, left: 4 }]} />
+                <View style={[styles.pickleballHole, { top: 16, left: 18 }]} />
+                <View style={[styles.pickleballHole, { top: 6, left: 4 }]} />
+              </View>
+            </Animated.View>
+          </Animated.View>
+        </View>
+      </Modal>
+    );
   }
 
   // ========================================
@@ -422,14 +755,7 @@ export default function App() {
                   <Text style={styles.tagline}>PADDLE & SOCIAL</Text>
                   <View style={styles.taglineLine} />
                 </View>
-                {isAdminMode && (
-                  <TouchableOpacity
-                    style={styles.adminBadge}
-                    onPress={() => setScreen('admin')}
-                  >
-                    <Text style={styles.adminBadgeText}>🔐 ADMIN</Text>
-                  </TouchableOpacity>
-                )}
+                {/* Admin access: tap logo 5 times within 3 seconds */}
               </View>
             }
 
@@ -437,7 +763,7 @@ export default function App() {
             renderSectionHeader={({ section: { title } }) => (
               <View style={styles.stickyHeader}>
                 <Text style={styles.sectionTitle}>{title}</Text>
-                <Text style={styles.sectionSubtitle}>14 Courts · {FACILITY.courtCount} total</Text>
+                <Text style={styles.sectionSubtitle}>{facility.courtCount} Courts Available</Text>
               </View>
             )}
 
@@ -483,7 +809,7 @@ export default function App() {
                     ) : !userQueue.inQueue ? (
                       <TouchableOpacity
                         style={[styles.joinButton, { backgroundColor: level.color }]}
-                        onPress={() => handleJoinQueue(level)}
+                        onPress={() => openJoinModal(level)}
                       >
                         <Text style={styles.joinButtonText}>Join →</Text>
                       </TouchableOpacity>
@@ -677,7 +1003,7 @@ export default function App() {
     const [isLoadingCourts, setIsLoadingCourts] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
 
-    const FACILITY_ID = 'stpete-athletic';
+    const FACILITY_ID = 'st-pete-athletic'; // Match player UI facility ID
 
     // Load courts from Firestore on mount
     useEffect(() => {
@@ -1139,13 +1465,87 @@ export default function App() {
   if (isLoading) {
     return <LoadingScreen />;
   }
-  if (screen === 'admin' && isAdminMode) {
-    return <AdminScreen />;
-  }
-  if (screen === 'queue' && userQueue.inQueue) {
-    return <QueueScreen />;
-  }
-  return <HomeScreen />;
+
+  // Main content with modals
+  const mainContent = () => {
+    if (screen === 'admin' && isAdminMode) {
+      return <AdminScreen />;
+    }
+    if (screen === 'queue' && userQueue.inQueue) {
+      return <QueueScreen />;
+    }
+    return <HomeScreen />;
+  };
+
+  return (
+    <>
+      {mainContent()}
+
+      {/* Join Queue Modal - inline to prevent re-render issues */}
+      {showJoinModal && pendingLevel && (
+        <Modal
+          visible={showJoinModal}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={cancelJoinModal}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.modalOverlay}
+          >
+            <TouchableOpacity
+              style={styles.modalBackdrop}
+              activeOpacity={1}
+              onPress={() => Keyboard.dismiss()}
+            />
+            <View style={styles.joinModalContainer}>
+              <View style={[styles.joinModalHeader, { backgroundColor: pendingLevel.color }]}>
+                <Text style={styles.joinModalTitle}>Join {pendingLevel.label}</Text>
+                <Text style={styles.joinModalSubtitle}>Courts {pendingLevel.courts} • DUPR {pendingLevel.description}</Text>
+              </View>
+
+              <View style={styles.joinModalBody}>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Your Name *"
+                  placeholderTextColor={COLORS.textMuted}
+                  value={playerName}
+                  onChangeText={setPlayerName}
+                  autoCapitalize="words"
+                  autoFocus={true}
+                  returnKeyType="next"
+                />
+
+                <TextInput
+                  style={[styles.textInput, { marginTop: 12 }]}
+                  placeholder="Phone (optional - for SMS alerts)"
+                  placeholderTextColor={COLORS.textMuted}
+                  value={playerPhone}
+                  onChangeText={setPlayerPhone}
+                  keyboardType="phone-pad"
+                  returnKeyType="done"
+                />
+
+                <View style={styles.modalButtons}>
+                  <TouchableOpacity style={styles.modalCancelBtn} onPress={cancelJoinModal}>
+                    <Text style={styles.modalCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalJoinBtn, { backgroundColor: pendingLevel.color }]}
+                    onPress={confirmJoinQueue}
+                  >
+                    <Text style={styles.modalJoinText}>Join Queue →</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+      )}
+
+      <YourTurnModal />
+    </>
+  );
 }
 
 // ========================================
@@ -2287,6 +2687,194 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.success,
     fontWeight: '500',
+  },
+
+  // ========================================
+  // JOIN QUEUE MODAL STYLES
+  // ========================================
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)', // Darker backdrop for better contrast
+  },
+  joinModalContainer: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    overflow: 'hidden',
+  },
+  joinModalHeader: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  joinModalTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: COLORS.white,
+  },
+  joinModalSubtitle: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.85)',
+    marginTop: 4,
+  },
+  joinModalBody: {
+    padding: 24,
+    paddingBottom: 40,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    marginBottom: 8,
+    marginTop: 16,
+  },
+  textInput: {
+    backgroundColor: COLORS.background,
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    color: COLORS.textPrimary,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    marginTop: 28,
+    gap: 12,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 16,
+    borderRadius: 12,
+    backgroundColor: COLORS.background,
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  modalJoinBtn: {
+    flex: 2,
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  modalJoinText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.white,
+  },
+
+  // ========================================
+  // "YOU'RE UP!" MODAL STYLES
+  // ========================================
+  yourTurnOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  yourTurnContainer: {
+    backgroundColor: COLORS.white,
+    borderRadius: 32,
+    padding: 40,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 360,
+  },
+  yourTurnLogoLarge: {
+    width: 80,
+    height: 80,
+    marginBottom: 16,
+  },
+  yourTurnTitleLarge: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: COLORS.primary,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  courtBadgeLarge: {
+    backgroundColor: COLORS.success,
+    paddingHorizontal: 32,
+    paddingVertical: 20,
+    borderRadius: 20,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  courtBadgeLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.8)',
+    letterSpacing: 2,
+  },
+  courtBadgeNumber: {
+    fontSize: 36,
+    fontWeight: '900',
+    color: COLORS.white,
+    marginTop: 4,
+  },
+  yourTurnLevelText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+    marginBottom: 32,
+  },
+  yourTurnButtons: {
+    width: '100%',
+    gap: 12,
+  },
+  imHereBtnLarge: {
+    backgroundColor: COLORS.success,
+    paddingVertical: 18,
+    borderRadius: 16,
+    alignItems: 'center',
+  },
+  imHereBtnLargeText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: COLORS.white,
+    letterSpacing: 1,
+  },
+  needTimeBtnLarge: {
+    backgroundColor: COLORS.background,
+    paddingVertical: 16,
+    borderRadius: 16,
+    alignItems: 'center',
+  },
+  needTimeBtnLargeText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  // Rolling Pickleball Animation Styles
+  rollingPickleball: {
+    width: 32,
+    height: 32,
+    marginTop: 20,
+  },
+  pickleballInner: {
+    width: 32,
+    height: 32,
+    backgroundColor: '#FFE135', // Neon yellow pickleball color
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E5CA2C',
+    position: 'relative',
+  },
+  pickleballHole: {
+    position: 'absolute',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(0,0,0,0.15)',
+    top: 10,
+    left: 10,
   },
 });
 
