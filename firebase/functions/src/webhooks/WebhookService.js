@@ -12,12 +12,32 @@ const crypto = require('crypto');
  * Webhook event types
  */
 const WEBHOOK_EVENTS = {
+    // Queue Events
     QUEUE_PLAYER_JOINED: 'queue.player_joined',
     QUEUE_PLAYER_LEFT: 'queue.player_left',
     QUEUE_POSITION_UPDATED: 'queue.position_updated',
+    QUEUE_CLEARED: 'queue.cleared',
+
+    // Game Events
     GAME_STARTED: 'game.started',
     GAME_ENDED: 'game.ended',
-    PLAYER_NOTIFIED: 'player.notified'
+    GAME_SCORE_UPDATED: 'game.score_updated',
+
+    // Court Events
+    COURT_AVAILABLE: 'court.available',
+    COURT_OCCUPIED: 'court.occupied',
+    COURT_MAINTENANCE: 'court.maintenance',
+
+    // Player Events
+    PLAYER_NOTIFIED: 'player.notified',
+    PLAYER_REGISTERED: 'player.registered',
+    PLAYER_CHECKED_IN: 'player.checked_in',
+    PLAYER_NO_SHOW: 'player.no_show',
+
+    // Facility Events
+    FACILITY_CONFIG_UPDATED: 'facility.config_updated',
+    FACILITY_HOURS_CHANGED: 'facility.hours_changed',
+    FACILITY_ANNOUNCEMENT: 'facility.announcement'
 };
 
 /**

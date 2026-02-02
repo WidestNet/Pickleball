@@ -1,55 +1,44 @@
 {
-    "expo": {
-        "name": "St Pete Pickleball",
-        "slug": "stpete-pickleball",
-        "version": "1.0.0",
-        "orientation": "portrait",
-        "icon": "./assets/icon.png",
-        "userInterfaceStyle": "automatic",
-        "scheme": "stpete-pickleball",
-        "splash": {
-            "image": "./assets/splash.png",
-            "resizeMode": "contain",
-            "backgroundColor": "#10B981"
-        },
-        "ios": {
-            "supportsTablet": true,
-            "bundleIdentifier": "com.stpeteathletic.pickleball",
-            "infoPlist": {
-                "UIBackgroundModes": [
-                    "remote-notification"
-                ]
-            }
-        },
-        "android": {
-            "adaptiveIcon": {
-                "foregroundImage": "./assets/adaptive-icon.png",
-                "backgroundColor": "#10B981"
-            },
-            "package": "com.stpeteathletic.pickleball",
-            "googleServicesFile": "./google-services.json"
-        },
-        "web": {
-            "favicon": "./assets/favicon.png",
-            "bundler": "metro"
-        },
-        "plugins": [
-            "expo-router",
-            [
-                "expo-notifications",
-                {
-                    "icon": "./assets/notification-icon.png",
-                    "color": "#10B981"
-                }
-            ]
-        ],
-        "extra": {
-            "router": {
-                "origin": false
-            },
-            "eas": {
-                "projectId": "YOUR_EAS_PROJECT_ID"
-            }
+  "expo": {
+    "name": "St Pete Athletic",
+    "slug": "stpete-athletic",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "stpete-athletic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.stpeteathletic.queue"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#0A0A0A"
+      },
+      "package": "com.stpeteathletic.queue"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "sounds": []
         }
+      ]
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "stpete-athletic"
+      }
     }
+  }
 }
